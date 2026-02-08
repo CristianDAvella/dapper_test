@@ -1,0 +1,61 @@
+version: '3.7'
+
+x-airflow-base: &airflow-base
+  build: .                             # construye con nuestro Dockerfile corregido
+  user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-50000}"
+  #env_file:
+  #  - .env                             # carga GEMINI_API_KEY (y cualquier otra var. secreta)
+  environment:
+    # Configuración de Airflow
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+
+    # Para que los DAGs puedan importar tus módulos
+    PYTHONPATH: "/opt/airflow/modules:${PYTHONPATH}"
+
+    # Variables de conexión a la BD de negocio que usa persistence.py
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_NAME: airflow
+    DB_USER: airflow
+    DB_PASSWORD: airflow #Esto no es lo mas recomendado, pero mi interes es que el evaluador levante el contenedor lo mas facil posible
+
+  volumes:
+#    - ./config/airflow.cfg:/opt/airflow/airflow.cfg
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./src:/opt/airflow/src
+    - ./configs:/opt/airflow/configs
+    - ./modules:/opt/airflow/modules
+    - ./data:/opt/airflow/data
+
+services:
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER:     airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB:       airflow
+    ports:
+      - "5432:5432"
+
+  scheduler:
+    <<: *airflow-base
+    command: ["airflow", "scheduler"]
+    restart: always
+    depends_on:
+      - postgres
+
+  webserver:
+    <<: *airflow-base
+    command: ["airflow", "webserver"]
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - scheduler

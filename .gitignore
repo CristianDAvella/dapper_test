@@ -1,0 +1,54 @@
+# === Python básico ===
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv*/
+venv*/
+ENV/
+.ipynb_checkpoints/
+
+# === Dependencias / build ===
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+*.manifest
+*.spec
+
+# === Logs y datos generados ===
+logs/
+data/raw/
+data/processed/
+*.log
+
+# === Airflow específico ===
+airflow.cfg
+airflow.db
+airflow-webserver.pid
+airflow-scheduler.pid
+standalone_admin_password.txt
+.airflow_db_initialised
+
+# === Docker / Compose ===
+docker-context-files/
+*.tar
+*.tar.gz
+
+# === IDEs / editores ===
+# VSCode
+.vscode/
+# PyCharm
+.idea/
+*.iml
+# Vim
+*.swp
+*~
+# Emacs
+*.elc
+*.tmp
+
+# === SO ===
+.DS_Store
+Thumbs.db
