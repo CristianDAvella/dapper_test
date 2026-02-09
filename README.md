@@ -1,59 +1,142 @@
-# ANI Regulations Scraper
+# ETL Normatividad ANI con Airflow
 
-Proyecto de scraping y carga de normatividad de la **Agencia Nacional de Infraestructura (ANI)** hacia una base de datos **PostgreSQL**, usando un pipeline Python (estilo Lambda) y un contenedor Docker con Postgres.
-
-El objetivo es que el evaluador pueda levantar el entorno localmente, ejecutar el scraping y ver los datos persistidos sin fricción.
+Pipeline ETL que **extrae**, **valida** y **escribe** la normatividad de la ANI en una base **Postgres** orquestada con **Airflow**.
 
 ---
 
-## 1. Requisitos
+## 1. Qué hace el proyecto
+
+- Scraping de la página de normatividad de la ANI.
+- Validación configurable por campo (tipo + regex + obligatoriedad) mediante `configs/validation_rules.yaml`.
+- Escritura en Postgres evitando duplicados (según lógica de la Lambda original).
+- Orquestación en un DAG con tres tareas:
+
+```text
+extract → validate → load
+```
+
+---
+
+## 2. Requisitos
 
 - Docker y Docker Compose instalados.
-- Python 3.10+ instalado (solo si desea ejecutar el script fuera de Docker).
-- Acceso a Internet (el scraper consulta la web de la ANI).
+- Puertos libres:
+  - `8080` (Airflow web)
+  - `5432` (Postgres, opcional para acceso desde host)
+
+No se requiere instalar Python ni Airflow localmente.
 
 ---
 
-## 2. Estructura principal del proyecto
+## 3. Estructura mínima
 
-Los archivos relevantes son:
-
-- `docker-compose.yml`  
-  Define un contenedor con PostgreSQL, incluyendo usuario y contraseña
-
-- `schema.sql`  
-  Crea el esquema y tablas:
-  - `public.regulations`
-  - `public.components`
-  - `public.regulations_component` 
-
-
-- `persistence.py`  
-  Lógica de acceso a base de datos (clase `DatabaseManager` y helpers de inserción).
-
-- `validation.py`  
-  Capa de validación intermedia, que aplica reglas configurables a un `DataFrame` antes de escribir en la base de datos.
-
-- `validation_rules.yaml`  
-  Archivo de configuración que define las reglas de validación por campo (tipo, regex, obligatoriedad).
+```text
+dapper_test/
+├── configs/
+│   └── validation_rules.yaml
+├── dags/
+│   └── ani_scraping_dag.py
+├── data/
+│   ├── raw/
+│   └── processed/
+├── modules/
+│   ├── extraction.py
+│   ├── validation.py
+│   └── persistence.py
+├── schema.sql
+├── docker-compose.yml
+└── Dockerfile
+```
 
 ---
 
-## 3. Levantar la base de datos con Docker
+## 4. Levantar el entorno
 
-1. Ir a la raíz del proyecto (donde está `docker-compose.yml`).
-2. Levantar el contenedor de Postgres:
+Desde la raíz del proyecto:
 
-   ```bash
-   docker compose up -d
+```bash
+docker-compose up --build
+```
+
+Esto levanta:
+
+- Postgres (`airflow` / `airflow`, DB `airflow`)
+- Airflow (`webserver`, `scheduler`, `airflow-init`)
+
+---
+
+## 5. Crear tablas de negocio (obligatorio)
+
+Con los contenedores arriba, ejecutar en la raíz:
+
+```bash
+sudo docker exec -i dapper_test-postgres-1 \
+    psql -U airflow -d airflow < schema.sql
+```
+
+Si el nombre del contenedor Postgres es distinto, ajusta `dapper_test-postgres-1` usando `docker ps`.
+
+---
+
+## 6. Ejecutar el DAG
+
+1. Abrir Airflow:
+
+   ```text
+   http://localhost:8080
    ```
-3. Cargar el esquema de base de datos (ajusta el nombre del contenedor y credenciales según tu docker-compose.yml):
 
-   ```bash
-   docker exec -i NOMBRE_CONTENEDOR_POSTGRES \
-    psql -U USUARIO -d BASE_DATOS < schema.sql
+   Credenciales:
+
+   - usuario: `admin`
+   - password: `admin`
+
+2. Buscar el DAG `ani_scraping_pipeline`.
+3. Entrar al DAG y pulsar **Trigger DAG**.
+4. (Opcional) Si tu UI permite configuración, usar una prueba pequeña:
+
+   ```json
+   {
+     "num_pages": 1,
+     "verbose": true
+   }
    ```
 
-## 4. Ejecutar el ETL
+Airflow ejecutará las tareas `extract`, `validate` y `load` en orden, usando CSV intermedios en `data/raw` y `data/processed`.
 
-Despues de esto puedes y a **http://localhost:8080/** y ejecutar el proceso.
+---
+
+## 7. Ver logs y resultados
+
+- En la vista **Graph**, haz clic en cada tarea → **View Log** para ver:
+  - `extract`: páginas procesadas, registros extraídos, ruta del CSV.
+  - `validate`: registros válidos vs descartados.
+  - `load`: procesados, insertados y duplicados evitados.
+
+Para comprobar los datos en Postgres:
+
+```bash
+docker exec -it dapper_test-postgres-1 bash
+psql -U airflow -d airflow
+```
+
+Ejemplo de consultas:
+
+```sql
+SELECT id, title, created_at, entity
+FROM regulations
+ORDER BY id DESC
+LIMIT 10;
+```
+
+Salir de `psql` con `\q`.
+
+---
+
+## 8. Apagar el entorno
+
+```bash
+docker-compose down
+```
+
+(Usa `docker-compose down -v` si también quieres borrar los datos de la base.)

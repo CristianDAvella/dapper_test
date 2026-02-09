@@ -9,22 +9,50 @@ Módulo de validación de datos extraídos.
 
 Reglas:
 - Si un campo no cumple su regla:
-    - Si es obligatorio -> descartar toda la fila.
-    - Si es opcional   -> campo a NULL (None en pandas).
+  - Si es obligatorio -> descartar toda la fila.
+  - Si es opcional -> campo a NULL (None en pandas).
 """
 
+import os
 import re
 from datetime import datetime
 from typing import Any, Dict, Tuple
 
 import pandas as pd
 import yaml
-import os
 
 
-def _load_rules(rules_path: str = "validation_rules.yaml") -> Dict[str, Any]:
+def _get_rules_path() -> str:
+    """
+    Construye dinámicamente la ruta a configs/validation_rules.yaml
+    asumiendo estructura:
+
+    <BASE_DIR>/
+      ├─ dags/
+      ├─ modules/
+      ├─ configs/
+          └─ validation_rules.yaml
+
+    donde este archivo vive en <BASE_DIR>/modules/validation.py
+    """
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.abspath(os.path.join(module_dir, os.pardir))
+    rules_path = os.path.join(base_dir, "configs", "validation_rules.yaml")
+
     if not os.path.exists(rules_path):
-        raise FileNotFoundError(f"Validation rules file not found: {rules_path}")
+        raise FileNotFoundError(
+            f"No se encontró validation_rules.yaml en: {rules_path}"
+        )
+
+    print(f"[VALIDATION] Usando archivo de reglas: {rules_path}")
+    return rules_path
+
+
+def _load_rules() -> Dict[str, Any]:
+    """
+    Carga las reglas de validación desde configs/validation_rules.yaml.
+    """
+    rules_path = _get_rules_path()
     with open(rules_path, "r", encoding="utf-8") as f:
         rules = yaml.safe_load(f)
     return rules or {}
@@ -76,8 +104,7 @@ def _validate_field(value: Any, field_rule: Dict[str, Any]) -> Tuple[bool, Any]:
     """
     required = bool(field_rule.get("required", False))
     expected_type = field_rule.get("type")
-    pattern = field_rule.get("regex") or ""
-    pattern = pattern.strip()
+    pattern = (field_rule.get("regex") or "").strip()
 
     # Tratar NaN como None
     if isinstance(value, float) and pd.isna(value):
@@ -121,19 +148,12 @@ def _validate_field(value: Any, field_rule: Dict[str, Any]) -> Tuple[bool, Any]:
     return True, value
 
 
-def run_validation(df: pd.DataFrame, rules_path: str = "validation_rules.yaml") -> pd.DataFrame:
+def run_validation(df: pd.DataFrame) -> pd.DataFrame:
     """
     Valida los datos extraídos según reglas configurables en YAML.
 
     - Campos obligatorios que fallen -> descarta fila completa.
-    - Campos opcionales que fallen   -> setea campo a NULL.
-
-    Args:
-        df: DataFrame con los datos extraídos del scraping.
-        rules_path: Ruta al archivo YAML con reglas de validación.
-
-    Returns:
-        DataFrame validado listo para la etapa de persistencia.
+    - Campos opcionales que fallen -> setea campo a NULL.
     """
     print(f"=== INICIANDO VALIDACIÓN: {len(df)} registros ===")
 
@@ -141,7 +161,7 @@ def run_validation(df: pd.DataFrame, rules_path: str = "validation_rules.yaml") 
         print("DataFrame vacío, nada que validar.")
         return df.copy()
 
-    rules = _load_rules(rules_path)
+    rules = _load_rules()
     field_rules: Dict[str, Dict[str, Any]] = rules.get("fields", {})
 
     validated_rows = []
@@ -162,6 +182,7 @@ def run_validation(df: pd.DataFrame, rules_path: str = "validation_rules.yaml") 
                 # Campo obligatorio inválido -> descartar fila
                 row_valid = False
                 break
+
             # Para opcionales o válidos, normalizamos el valor (puede ser None)
             new_row[field_name] = normalized
 
@@ -170,7 +191,11 @@ def run_validation(df: pd.DataFrame, rules_path: str = "validation_rules.yaml") 
         else:
             discarded_rows += 1
 
-    valid_df = pd.DataFrame(validated_rows) if validated_rows else pd.DataFrame(columns=df.columns)
+    valid_df = (
+        pd.DataFrame(validated_rows)
+        if validated_rows
+        else pd.DataFrame(columns=df.columns)
+    )
 
     print(
         f"=== VALIDACIÓN COMPLETADA: "
