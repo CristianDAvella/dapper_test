@@ -1,0 +1,46 @@
+# Reglas de validación por campo para regulations
+
+fields:
+  title:
+    required: true
+    type: string
+    regex: "^.{1,100}$"          # 1 a 100 caracteres
+  created_at:
+    required: true
+    type: date
+    regex: "^\\d{4}-\\d{2}-\\d{2}$"   # YYYY-MM-DD
+  entity:
+    required: true
+    type: string
+    regex: "^(?=.{1,150}$).+"   # no vacío, máx 150
+  external_link:
+    required: false
+    type: string
+    regex: "^https?://.+$"      # empieza por http/https
+  summary:
+    required: false
+    type: string
+    regex: ""                   # sin restricción extra
+  rtype_id:
+    required: false
+    type: int
+    regex: ""                   # solo tipo entero
+  classification_id:
+    required: false
+    type: int
+    regex: ""                   # solo tipo entero
+  gtype:
+    required: false
+    type: string
+    regex: "^(link)?$"         # 'link' o vacío
+  update_at:
+    required: true
+    type: datetime
+    regex: "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$"  # YYYY-MM-DD HH:MM:SS
+  is_active:
+    required: true
+    type: bool
+    regex: ""                   # solo bool
+
+# Nombre de la entidad esperada
+entity_expected: "Agencia Nacional de Infraestructura"

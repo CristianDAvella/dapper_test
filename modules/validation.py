@@ -1,41 +1,180 @@
 """
 Módulo de validación de datos extraídos.
-En la fase inicial mantiene la lógica existente.
-Posteriormente se implementará validación configurable vía YAML.
+
+- Intercala una etapa de validación entre extracción y escritura.
+- Usa reglas configurables en YAML:
+  - tipo de dato
+  - regex por campo
+  - obligatoriedad
+
+Reglas:
+- Si un campo no cumple su regla:
+    - Si es obligatorio -> descartar toda la fila.
+    - Si es opcional   -> campo a NULL (None en pandas).
 """
 
+import re
+from datetime import datetime
+from typing import Any, Dict, Tuple
+
 import pandas as pd
+import yaml
+import os
 
 
-def run_validation(df):
+def _load_rules(rules_path: str = "validation_rules.yaml") -> Dict[str, Any]:
+    if not os.path.exists(rules_path):
+        raise FileNotFoundError(f"Validation rules file not found: {rules_path}")
+    with open(rules_path, "r", encoding="utf-8") as f:
+        rules = yaml.safe_load(f)
+    return rules or {}
+
+
+def _cast_value(value: Any, expected_type: str) -> Any:
+    """Intenta castear el valor al tipo indicado. Si no puede, lanza ValueError."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+
+    if expected_type == "string":
+        return str(value).strip()
+
+    if expected_type == "int":
+        if isinstance(value, bool):
+            raise ValueError("bool is not allowed as int")
+        return int(value)
+
+    if expected_type == "bool":
+        if isinstance(value, bool):
+            return value
+        str_v = str(value).strip().lower()
+        if str_v in {"true", "1", "t", "yes", "y"}:
+            return True
+        if str_v in {"false", "0", "f", "no", "n"}:
+            return False
+        raise ValueError(f"Cannot cast '{value}' to bool")
+
+    if expected_type == "date":
+        # Esperamos YYYY-MM-DD
+        if isinstance(value, datetime):
+            return value.date()
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+
+    if expected_type == "datetime":
+        # Esperamos YYYY-MM-DD HH:MM:SS
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None)
+        return datetime.strptime(str(value)[:19], "%Y-%m-%d %H:%M:%S")
+
+    # Si no se reconoce el tipo, devolver tal cual
+    return value
+
+
+def _validate_field(value: Any, field_rule: Dict[str, Any]) -> Tuple[bool, Any]:
     """
-    Valida los datos extraídos según reglas configurables.
-    
-    Por ahora retorna el DataFrame sin cambios, manteniendo la validación
-    que ya existe en el proceso de extracción (títulos largos, fechas inválidas, etc.).
-    
-    En la siguiente fase implementará:
-    - Validación de tipos de datos
-    - Validación con regex
-    - Campos obligatorios vs opcionales
-    - Descartar filas o dejar campos NULL según reglas
-    
+    Valida un campo según su regla.
+    Devuelve (is_valid, normalized_value).
+    """
+    required = bool(field_rule.get("required", False))
+    expected_type = field_rule.get("type")
+    pattern = field_rule.get("regex") or ""
+    pattern = pattern.strip()
+
+    # Tratar NaN como None
+    if isinstance(value, float) and pd.isna(value):
+        value = None
+
+    # Si no hay valor
+    if value is None or value == "":
+        # Si es obligatorio, inválido
+        if required:
+            return False, None
+        # Opcional sin valor: válido, se queda como None
+        return True, None
+
+    # 1) Cast de tipo si está configurado
+    try:
+        if expected_type:
+            value = _cast_value(value, expected_type)
+    except Exception:
+        # Falla de tipo
+        if required:
+            return False, None
+        return True, None
+
+    # 2) Validación regex si existe
+    if pattern:
+        # Para fechas y datetimes, validamos sobre string formateado
+        value_to_check = value
+        if isinstance(value, datetime):
+            value_to_check = value.strftime("%Y-%m-%d %H:%M:%S")
+        elif hasattr(value, "isoformat"):
+            # date u otros tipos con isoformat
+            value_to_check = value.isoformat()
+        else:
+            value_to_check = str(value)
+
+        if not re.match(pattern, value_to_check):
+            if required:
+                return False, None
+            return True, None
+
+    return True, value
+
+
+def run_validation(df: pd.DataFrame, rules_path: str = "validation_rules.yaml") -> pd.DataFrame:
+    """
+    Valida los datos extraídos según reglas configurables en YAML.
+
+    - Campos obligatorios que fallen -> descarta fila completa.
+    - Campos opcionales que fallen   -> setea campo a NULL.
+
     Args:
-        df (pd.DataFrame): DataFrame con datos extraídos
-    
+        df: DataFrame con los datos extraídos del scraping.
+        rules_path: Ruta al archivo YAML con reglas de validación.
+
     Returns:
-        pd.DataFrame: DataFrame validado
+        DataFrame validado listo para la etapa de persistencia.
     """
     print(f"=== INICIANDO VALIDACIÓN: {len(df)} registros ===")
-    
-    # Versión inicial: retornar el DataFrame sin modificaciones
-    # La validación actual está embebida en el scraping
-    valid_df = df.copy()
-    
-    # Aquí se implementará la validación con YAML
-    # Por ahora solo reportamos
-    discarded_count = 0
-    
-    print(f"=== VALIDACIÓN COMPLETADA: {len(valid_df)} válidos, {discarded_count} descartados ===")
-    
+
+    if df.empty:
+        print("DataFrame vacío, nada que validar.")
+        return df.copy()
+
+    rules = _load_rules(rules_path)
+    field_rules: Dict[str, Dict[str, Any]] = rules.get("fields", {})
+
+    validated_rows = []
+    discarded_rows = 0
+
+    # Iterar fila a fila para aplicar reglas
+    for idx, row in df.iterrows():
+        row_dict = row.to_dict()
+        row_valid = True
+        new_row = dict(row_dict)
+
+        for field_name, frule in field_rules.items():
+            # Si el campo no existe en el DF, lo tratamos como None
+            value = row_dict.get(field_name, None)
+            is_ok, normalized = _validate_field(value, frule)
+
+            if not is_ok and frule.get("required", False):
+                # Campo obligatorio inválido -> descartar fila
+                row_valid = False
+                break
+            # Para opcionales o válidos, normalizamos el valor (puede ser None)
+            new_row[field_name] = normalized
+
+        if row_valid:
+            validated_rows.append(new_row)
+        else:
+            discarded_rows += 1
+
+    valid_df = pd.DataFrame(validated_rows) if validated_rows else pd.DataFrame(columns=df.columns)
+
+    print(
+        f"=== VALIDACIÓN COMPLETADA: "
+        f"{len(valid_df)} válidos, {discarded_rows} descartados por campos obligatorios ==="
+    )
+
     return valid_df

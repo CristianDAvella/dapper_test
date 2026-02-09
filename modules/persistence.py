@@ -15,7 +15,7 @@ from .constants import ENTITY_VALUE
 def get_db_config():
     """
     Obtiene la configuración de la base de datos desde variables de entorno.
-    Ya no usa AWS Secrets Manager - adaptado para Airflow con docker-compose.
+    - adaptado para Airflow con docker-compose.
     """
     return {
         'dbname': os.environ.get('DB_NAME', 'airflow'),

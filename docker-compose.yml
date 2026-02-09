@@ -42,13 +42,22 @@ services:
       POSTGRES_DB:       airflow
     ports:
       - "5432:5432"
-
+  airflow-init:
+    <<: *airflow-base
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --firstname Airflow --lastname Admin --role Admin --email admin@example.com --password admin"
+    depends_on:
+      - postgres
+    restart: "no"
   scheduler:
     <<: *airflow-base
     command: ["airflow", "scheduler"]
     restart: always
     depends_on:
       - postgres
+      - airflow-init
 
   webserver:
     <<: *airflow-base
@@ -58,4 +67,5 @@ services:
       - "8080:8080"
     depends_on:
       - postgres
+      - airflow-init
       - scheduler
