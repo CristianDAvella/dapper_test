@@ -47,6 +47,11 @@ dapper_test/
 ├── docker-compose.yml
 └── Dockerfile
 ```
+Para que el proyecto funcione correctamente, los directorios deben tener los permisos necesarios para ser manipulados por los contenedores. Como estamos en un ambiente de prueba, puedes ejecutar:
+
+```bash
+sudo chmod -R 777 dapper_test/
+```
 
 ---
 
